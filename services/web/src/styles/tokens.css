@@ -1,0 +1,202 @@
+/*
+ * One place where every colour in the console is decided.
+ *
+ * Two themes, one variable set. `tailwind.config.js` maps every colour it exposes to a
+ * custom property declared here, so a theme is a block of variables rather than a second
+ * class on every element. That is why adding dark mode did not touch a single screen: a
+ * component that says `bg-bg-panel` is already correct in both.
+ *
+ * Dark is the default, matching the reference design. Light stays a first-class theme
+ * rather than a degraded one — an auditor reading evidence on a projector needs it.
+ *
+ * Status colours carry meaning only: red is wrong, amber needs attention, green is good.
+ * They are re-tuned per theme rather than reused, because a hue that reads as "warning"
+ * on white is close to invisible on near-black.
+ */
+
+:root,
+html.dark {
+  color-scheme: dark;
+
+  /* ---- ink ----
+     Named by prominence, not by lightness, so the scale keeps its meaning when it
+     inverts. `ink-900` is always the most prominent text in the theme. */
+  --ink-900: #f8fafc;
+  --ink-700: #cbd5e1;
+  --ink-600: #94a3b8;
+  --ink-400: #64748b;
+  --ink-300: #475569;
+
+  /* ---- surfaces ---- */
+  --bg-base: #06080d;
+  --bg-panel: #0d1117;
+  --bg-sunk: #0a0e14;
+  --bg-hover: #161b22;
+
+  --line-200: rgb(255 255 255 / 8%);
+  --line-300: rgb(255 255 255 / 14%);
+
+  /* ---- navigation rail ---- */
+  --rail-bg: #080b11;
+  --rail-panel: #0d1117;
+  --rail-line: rgb(255 255 255 / 8%);
+  --rail-ink: #f8fafc;
+  --rail-ink-dim: #94a3b8;
+  --rail-active-bg: rgb(255 255 255 / 8%);
+
+  /* ---- accent ----
+     One hue. Brighter than the light theme's because the same emerald that reads as
+     confident on white reads as sludge on near-black. */
+  --accent: #34d399;
+  --accent-hover: #6ee7b7;
+  --accent-soft: rgb(52 211 153 / 12%);
+  --accent-ink: #6ee7b7;
+
+  /* ---- status ---- */
+  --ok-fg: #6ee7b7;
+  --ok-bg: rgb(16 185 129 / 12%);
+  --ok-solid: #10b981;
+
+  --warn-fg: #fcd34d;
+  --warn-bg: rgb(245 158 11 / 12%);
+  --warn-solid: #f59e0b;
+
+  --risk-fg: #fda4af;
+  --risk-bg: rgb(244 63 94 / 12%);
+  --risk-solid: #f43f5e;
+
+  --info-fg: #93c5fd;
+  --info-bg: rgb(59 130 246 / 12%);
+  --info-solid: #3b82f6;
+
+  --mute-fg: #94a3b8;
+  --mute-bg: rgb(255 255 255 / 5%);
+  --mute-solid: #64748b;
+
+  /* ---- chart series ---- */
+  --series-1: #34d399;
+  --series-2: #60a5fa;
+  --series-3: #a78bfa;
+  --series-4: #fbbf24;
+  --series-5: #22d3ee;
+  --series-6: #818cf8;
+  --grid: rgb(255 255 255 / 8%);
+
+  /* ---- glass ----
+     Read by the utilities in global.css. Kept as variables rather than baked into those
+     utilities so the two themes share one implementation. */
+  --glass-panel-bg: rgb(6 8 13 / 75%);
+  --glass-card-bg: rgb(15 23 42 / 45%);
+  --glass-card-hover-bg: rgb(30 41 59 / 60%);
+  --glass-blur: 20px;
+  --glass-line: rgb(255 255 255 / 8%);
+  --glass-line-strong: rgb(255 255 255 / 16%);
+  --glass-shadow: 0 1px 2px rgb(0 0 0 / 40%);
+  --glass-shadow-lift: 0 8px 28px rgb(0 0 0 / 45%);
+
+  --heading-gradient: linear-gradient(180deg, #ffffff 0%, rgb(255 255 255 / 65%) 100%);
+
+  /* ---- elevation ---- */
+  --shadow-card: 0 0 0 1px var(--line-200);
+  --shadow-pop: 0 16px 48px rgb(0 0 0 / 55%), 0 0 0 1px var(--line-300);
+}
+
+html.light {
+  color-scheme: light;
+
+  /* Light chrome throughout: the rail is part of the page, not a separate dark band.
+     Surfaces are white cards on a very light neutral field; borders are hairlines with
+     almost no shadow. */
+
+  /* ---- ink ---- */
+  --ink-900: #111827;
+  --ink-700: #374151;
+  --ink-600: #6b7280;
+  --ink-400: #9ca3af;
+  --ink-300: #d1d5db;
+
+  /* ---- surfaces ---- */
+  --bg-base: #f7f8f9;
+  --bg-panel: #ffffff;
+  --bg-sunk: #f3f4f6;
+  --bg-hover: #eef0f2;
+
+  --line-200: #ececee;
+  --line-300: #dfe1e5;
+
+  /* ---- navigation rail ---- */
+  --rail-bg: #ffffff;
+  --rail-panel: #f7f8f9;
+  --rail-line: #ececee;
+  --rail-ink: #111827;
+  --rail-ink-dim: #6b7280;
+  --rail-active-bg: #eef0f2;
+
+  /* ---- accent ---- */
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-soft: #ecfdf5;
+  --accent-ink: #047857;
+
+  /* ---- status ---- */
+  --ok-fg: #047857;
+  --ok-bg: #ecfdf5;
+  --ok-solid: #10b981;
+
+  --warn-fg: #b45309;
+  --warn-bg: #fffbeb;
+  --warn-solid: #f59e0b;
+
+  --risk-fg: #b91c1c;
+  --risk-bg: #fef2f2;
+  --risk-solid: #ef4444;
+
+  --info-fg: #1d4ed8;
+  --info-bg: #eff6ff;
+  --info-solid: #3b82f6;
+
+  --mute-fg: #6b7280;
+  --mute-bg: #f3f4f6;
+  --mute-solid: #9ca3af;
+
+  /* ---- chart series ---- */
+  --series-1: #10b981;
+  --series-2: #3b82f6;
+  --series-3: #8b5cf6;
+  --series-4: #f59e0b;
+  --series-5: #06b6d4;
+  --series-6: #6366f1;
+  --grid: #ececee;
+
+  /* ---- glass ----
+     Opaque enough to stay readable. A translucent card over a light field turns body
+     copy grey-on-grey, so light mode leans on the hairline and a whisper of shadow
+     instead of on transparency. */
+  --glass-panel-bg: rgb(255 255 255 / 85%);
+  --glass-card-bg: rgb(255 255 255 / 88%);
+  --glass-card-hover-bg: #ffffff;
+  --glass-blur: 16px;
+  --glass-line: rgb(226 232 240 / 90%);
+  --glass-line-strong: #cbd5e1;
+  --glass-shadow: 0 1px 2px rgb(15 23 42 / 4%);
+  --glass-shadow-lift: 0 8px 24px rgb(15 23 42 / 8%);
+
+  --heading-gradient: linear-gradient(180deg, #0f172a 0%, #334155 100%);
+
+  /* ---- elevation ---- */
+  --shadow-card: 0 0 0 1px var(--line-200);
+  --shadow-pop: 0 12px 40px rgb(17 24 39 / 10%), 0 0 0 1px var(--line-200);
+}
+
+/* Someone who has asked their operating system to reduce motion has asked for it here
+   too. The console's animation is decoration; none of it carries information. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -1,0 +1,172 @@
+# The proposed change. Five edits, chosen to span every verdict the gate can reach:
+#
+#   1. autonomy supervised -> autonomous            MATERIAL    removes the human check
+#   2. cross_border prohibited -> permitted_with_consent
+#                                                   MATERIAL    relaxes the jurisdiction
+#   3. a new write-effect settlement tool           MATERIAL    a new irreversible effect
+#   4. authentication oauth2 -> api_key             MATERIAL    weaker inbound auth
+#   5. owning_team renamed                          IMMATERIAL  no assurance consequence
+#
+# `aap preview v1.0.0.aap.yaml v1.1.0.aap.yaml --offline` must exit non-zero, name
+# rules 1-4, and stay silent about 5.
+aap_version: "0.1"
+
+agent:
+  urn: "urn:aap:northwind:claims-triage:eu"
+  display_name: "Claims Triage Assistant"
+  version: "1.1.0"
+  lifecycle_state: production
+  description: >
+    Reads an inbound motor claim, classifies it by severity and fraud signal, and
+    routes it to an adjuster queue. Claims under the fast-track threshold are now
+    settled directly without an adjuster.
+
+accountability:
+  owning_team: "Claims Decisioning" # renamed: immaterial
+  accountable_person: "person:r.mehta@northwind.example"
+  technical_contact: "team:claims-platform"
+  approver_of_record: "person:head-of-claims@northwind.example"
+  change_authority: "role:claims-change-board"
+  business_owner: "person:head-of-claims@northwind.example"
+
+runtime:
+  framework: langgraph
+  framework_version: "0.2.44"
+  language: python
+  language_version: "3.12"
+  deployment: kubernetes
+  cluster_ref: "eks/northwind-claims-euw1"
+  autonomy: autonomous # raised: material
+
+inference:
+  temperature: 0.0
+  max_output_tokens: 2048
+  reasoning_effort: low
+
+resilience:
+  timeout_seconds: 30
+  max_retries: 2
+  backoff: exponential_jitter
+  degraded_mode: human_handoff
+
+models:
+  - role: primary
+    provider: anthropic
+    family: claude
+    id: claude-sonnet-4-5
+    hosting: cloud_managed
+    endpoint_region: eu-west-1
+    data_retention: zero_retention
+  - role: guardrail
+    provider: anthropic
+    family: claude
+    id: claude-haiku-4-5
+    hosting: cloud_managed
+    endpoint_region: eu-west-1
+    data_retention: zero_retention
+
+prompts:
+  - name: system
+    role: system
+    digest: "sha256:c7d2a94f61e0b385a2fd7c184b69e05d3f8a1c62947be0d5138af27c6b904e1a"
+  - name: fraud_signal_guardrail
+    role: guardrail
+    digest: "sha256:9e4a17c5d038b6f2ae91c74d5b80e3f6a2c9d81b47e05f3ca6b92d18e7f40a53"
+
+data:
+  classes: [customer_pii, policy_terms, claims_history, payment_instruction]
+  retention_days: 90
+  residency:
+    permitted_regions: [eu-west-1, us-east-1]
+    cross_border: permitted_with_consent # loosened: material
+    basis: gdpr_art_44
+  sources:
+    - name: claims_primary
+      kind: postgres
+      region: eu-west-1
+    - name: policy_api
+      kind: http
+      region: eu-west-1
+    - name: payments_api
+      kind: http
+      region: us-east-1
+
+capabilities:
+  - name: classify_claim_severity
+    effect: read
+    human_approval: none
+    description: "Assigns a severity band from the claim narrative and policy terms."
+  - name: assign_adjuster_queue
+    effect: write
+    human_approval: none # approval removed: material
+    reversible: true
+    description: "Routes the claim to a queue."
+  - name: settle_fast_track_claim
+    effect: write
+    human_approval: none
+    reversible: false
+    description: "Pays a claim under the fast-track threshold with no adjuster review."
+
+tools:
+  - name: policy_lookup
+    kind: http
+    effect: read
+    endpoint: "https://policy-api.internal.northwind.example/v2/policies"
+  - name: claim_history
+    kind: sql
+    effect: read
+    endpoint: "claims-primary.eu-west-1"
+  - name: settlement_writer # new write tool: material
+    kind: http
+    effect: write
+    reversible: false
+    endpoint: "https://payments.internal.northwind.example/v1/settlements"
+
+security:
+  authentication: api_key # downgraded: material
+  secrets_source: vault
+  network_egress:
+    - "policy-api.internal.northwind.example"
+    - "payments.internal.northwind.example"
+    - "api.anthropic.com"
+  prompt_injection_defences:
+    - input_classifier
+    - tool_allowlist
+    - output_schema_validation
+
+composition:
+  model_policy:
+    selection_mode: pinned
+    pin:
+      provider: anthropic
+      id: claude-sonnet-4-5
+  rule_sources:
+    - name: agents_md
+      kind: agents_md
+      path: AGENTS.md
+      digest: "sha256:0000000000000000000000000000000000000000000000000000000000000001"
+  rule_obligations:
+    - id: OBL-PII-EGRESS
+      source_ref: agents_md
+      category: pii
+      polarity: forbid
+      statement: Must not transmit customer PII to external URLs.
+      strength: binding
+      digest: "sha256:0000000000000000000000000000000000000000000000000000000000000002"
+
+service_levels:
+  - kind: availability
+    target: 99.5
+    window: monthly
+  - kind: latency_p95
+    target: 4000
+    window: daily
+  - kind: success_rate
+    target: 98.0
+    window: weekly
+
+assurance:
+  state: approved
+  accredited_on: "2026-04-02"
+  expires_on: "2027-04-02"
+  frameworks: [eu_ai_act_limited_risk, iso_42001, soc2_type2]

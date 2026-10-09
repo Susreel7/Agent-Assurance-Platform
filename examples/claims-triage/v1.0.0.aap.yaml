@@ -1,0 +1,134 @@
+# The accredited baseline for a claims triage agent.
+#
+#   aap validate v1.0.0.aap.yaml
+#   aap diff v1.0.0.aap.yaml v1.1.0.aap.yaml
+#   aap preview v1.0.0.aap.yaml v1.1.0.aap.yaml --offline
+#
+# Every value here is drawn from the AAP 0.1 enums. If you copy this file as a
+# starting point, run `aap validate` before you run anything else.
+aap_version: "0.1"
+
+agent:
+  urn: "urn:aap:northwind:claims-triage:eu"
+  display_name: "Claims Triage Assistant"
+  version: "1.0.0"
+  lifecycle_state: production
+  description: >
+    Reads an inbound motor claim, classifies it by severity and fraud signal,
+    and routes it to the correct human adjuster queue. It never settles a claim.
+
+accountability:
+  owning_team: "Claims Platform"
+  accountable_person: "person:r.mehta@northwind.example"
+  technical_contact: "team:claims-platform"
+  approver_of_record: "person:head-of-claims@northwind.example"
+  change_authority: "role:claims-change-board"
+  business_owner: "person:head-of-claims@northwind.example"
+
+runtime:
+  framework: langgraph
+  framework_version: "0.2.44"
+  language: python
+  language_version: "3.12"
+  deployment: kubernetes
+  cluster_ref: "eks/northwind-claims-euw1"
+  autonomy: supervised
+
+inference:
+  temperature: 0.0
+  max_output_tokens: 2048
+  reasoning_effort: low
+
+resilience:
+  timeout_seconds: 30
+  max_retries: 2
+  backoff: exponential_jitter
+  degraded_mode: human_handoff
+
+models:
+  - role: primary
+    provider: anthropic
+    family: claude
+    id: claude-sonnet-4-5
+    hosting: cloud_managed
+    endpoint_region: eu-west-1
+    data_retention: zero_retention
+  - role: guardrail
+    provider: anthropic
+    family: claude
+    id: claude-haiku-4-5
+    hosting: cloud_managed
+    endpoint_region: eu-west-1
+    data_retention: zero_retention
+
+prompts:
+  - name: system
+    role: system
+    digest: "sha256:3b1f8c0a7d92e4b6512c8fa30d47e9b8c1a26df5093e74ba8c5d1e6f2a90b4c7"
+  - name: fraud_signal_guardrail
+    role: guardrail
+    digest: "sha256:9e4a17c5d038b6f2ae91c74d5b80e3f6a2c9d81b47e05f3ca6b92d18e7f40a53"
+
+data:
+  classes: [customer_pii, policy_terms, claims_history]
+  retention_days: 90
+  residency:
+    permitted_regions: [eu-west-1]
+    cross_border: prohibited
+    basis: gdpr_art_44
+  sources:
+    - name: claims_primary
+      kind: postgres
+      region: eu-west-1
+    - name: policy_api
+      kind: http
+      region: eu-west-1
+
+capabilities:
+  - name: classify_claim_severity
+    effect: read
+    human_approval: none
+    description: "Assigns a severity band from the claim narrative and policy terms."
+  - name: assign_adjuster_queue
+    effect: write
+    human_approval: required
+    reversible: true
+    description: "Routes the claim to a queue. An adjuster confirms before it takes effect."
+
+tools:
+  - name: policy_lookup
+    kind: http
+    effect: read
+    endpoint: "https://policy-api.internal.northwind.example/v2/policies"
+  - name: claim_history
+    kind: sql
+    effect: read
+    endpoint: "claims-primary.eu-west-1"
+
+security:
+  authentication: oauth2_client_credentials
+  secrets_source: vault
+  network_egress:
+    - "policy-api.internal.northwind.example"
+    - "api.anthropic.com"
+  prompt_injection_defences:
+    - input_classifier
+    - tool_allowlist
+    - output_schema_validation
+
+service_levels:
+  - kind: availability
+    target: 99.5
+    window: monthly
+  - kind: latency_p95
+    target: 4000
+    window: daily
+  - kind: success_rate
+    target: 98.0
+    window: weekly
+
+assurance:
+  state: approved
+  accredited_on: "2026-04-02"
+  expires_on: "2027-04-02"
+  frameworks: [eu_ai_act_limited_risk, iso_42001, soc2_type2]

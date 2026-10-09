@@ -1,0 +1,106 @@
+# BYOC on AWS — the control plane runs in the customer's own account.
+#
+# What the customer needs to provision before installing:
+#
+#   1. An EKS cluster (or equivalent) in the region their data must stay in.
+#   2. An RDS PostgreSQL 16 instance, private subnet, encrypted at rest.
+#   3. An S3 bucket for accreditation packs and release artifacts, SSE enabled.
+#   4. A KMS key with ECC_NIST_P256 usage, SIGN_VERIFY. This is theirs, not ours.
+#   5. An IAM role for service accounts (IRSA) granting: s3:GetObject/PutObject on the
+#      bucket prefix, kms:Sign/GetPublicKey on the key, and optionally
+#      secretsmanager:GetSecretValue under the configured prefix.
+#
+# What leaves their account: nothing, unless telemetry is explicitly enabled below.
+# No evidence, no descriptors, no prompts, no completions. Point at this file in the
+# security review — it is the shortest honest answer to "where does our data go".
+
+deployment:
+  mode: byoc
+  tenancy: single
+  instanceName: ""          # e.g. "acme-prod" — appears in the console banner
+  environment: production
+
+image:
+  registry: ""              # the customer's own ECR, mirrored from ours
+  tag: 0.1.0
+  variant: "-aws"           # only the AWS SDK is present in this image
+  pullPolicy: IfNotPresent
+
+database:
+  external: true
+  host: ""                  # aap.abc123.eu-west-1.rds.amazonaws.com
+  port: 5432
+  name: aap
+  user: aap
+  sslMode: verify-full      # RDS supports it; do not weaken this
+  existingSecret: aap-db
+  existingSecretKey: password
+
+objectStore:
+  provider: s3
+  bucket: ""                # acme-aap-artifacts
+  prefix: "assurance/"
+  endpoint: ""              # empty means the standard AWS endpoint
+
+secretsProvider:
+  provider: aws_sm
+  prefix: "aap/"
+
+signing:
+  provider: aws_kms
+  # arn:aws:kms:eu-west-1:111122223333:key/...
+  # Their key, their key policy, their CloudTrail. They can revoke our access at any
+  # time and every signing operation we perform is logged in their account.
+  keyRef: ""
+
+licensing:
+  enabled: true
+  existingSecret: aap-license
+
+identity:
+  oidc:
+    issuer: ""              # their own identity provider
+    audience: agent-assurance
+
+telemetry:
+  # Off by default. If a customer opts in, this sends version, agent counts and error
+  # rates only — enough to support them, and nothing that could reconstruct their
+  # estate.
+  enabled: false
+  endpoint: ""
+
+serviceAccount:
+  create: true
+  annotations:
+    # IRSA: how the pod reaches S3, KMS and Secrets Manager with no static credentials.
+    eks.amazonaws.com/role-arn: ""
+
+ingress:
+  enabled: true
+  className: alb
+  host: ""
+  tls:
+    enabled: true
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internal
+    alb.ingress.kubernetes.io/target-type: ip
+
+networkPolicy:
+  enabled: true
+  allowedEgress:
+    - name: postgres
+      port: 5432
+    - name: dns
+      port: 53
+    - name: https-aws-apis          # S3, KMS, Secrets Manager
+      port: 443
+  # Populate only if the customer wants adversarial probes to run against live model
+  # endpoints. Leaving it empty disables probing, which is a legitimate choice.
+  modelProviderEgress: []
+
+api:
+  replicaCount: 2
+worker:
+  replicaCount: 1
+web:
+  replicaCount: 2

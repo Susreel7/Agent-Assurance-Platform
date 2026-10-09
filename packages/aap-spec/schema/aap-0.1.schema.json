@@ -1,0 +1,519 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-assurance.org/schema/aap-0.1.schema.json",
+  "title": "Agent Assurance Profile 0.1",
+  "description": "A thin governance profile for enterprise AI agents. Deliberately small. It REFERENCES A2A AgentCard for identity and capability advertisement, OpenTelemetry GenAI for runtime behaviour, MCP for tool metadata, and CycloneDX for software composition. It ADDS only the five governance primitives that none of those standards expresses: accountability binding, data class and residency, accreditation state, evidence linkage, and the configuration surface needed to compute change materiality.",
+  "type": "object",
+  "required": ["aap_version", "agent", "accountability", "runtime"],
+  "additionalProperties": true,
+
+  "properties": {
+    "aap_version": {
+      "type": "string",
+      "const": "0.1",
+      "description": "Profile version. Unknown sibling fields are forward-compatible and must not cause rejection."
+    },
+
+    "agent": {
+      "type": "object",
+      "required": ["urn", "version"],
+      "properties": {
+        "urn": {
+          "type": "string",
+          "pattern": "^urn:aap:[a-z0-9-]+:[a-z0-9-]+:[a-z0-9-]+$",
+          "description": "urn:aap:<org>:<team>:<agent>. Stable across versions; this is the agent's identity.",
+          "examples": ["urn:aap:acme:insurance-automation:claims-processor"]
+        },
+        "version": {
+          "type": "string",
+          "description": "Semantic version of this agent revision."
+        },
+        "display_name": { "type": "string" },
+        "description": { "type": "string" },
+        "lifecycle_state": {
+          "enum": ["dev", "test", "staging", "production", "retired"]
+        }
+      }
+    },
+
+    "references": {
+      "type": "object",
+      "description": "Pointers to artifacts owned by other standards. Never restate their contents here.",
+      "properties": {
+        "a2a_agent_card": {
+          "type": "string",
+          "format": "uri",
+          "description": "The A2A AgentCard. Authoritative for skills and endpoints."
+        },
+        "a2a_card_digest": {
+          "type": "string",
+          "description": "Pinned digest of the card, so drift in the card is detectable."
+        },
+        "otel_service_name": {
+          "type": "string",
+          "description": "Joins this descriptor to the agent's OpenTelemetry spans."
+        },
+        "mcp_servers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["url"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Stable server id for reconciliation when the runtime reports a short name."
+              },
+              "url": { "type": "string", "format": "uri" },
+              "digest": {
+                "type": "string",
+                "description": "Digest of the advertised tool list. A change here means the server altered the agent's capability surface with no change to the agent itself."
+              }
+            }
+          }
+        },
+        "sbom": {
+          "type": "string",
+          "description": "CycloneDX or SPDX document location."
+        }
+      }
+    },
+
+    "accountability": {
+      "type": "object",
+      "description": "PRIMITIVE 1. No existing standard binds accountability to an agent identity.",
+      "required": ["owning_team", "accountable_person"],
+      "properties": {
+        "owning_team": { "type": "string" },
+        "accountable_person": { "$ref": "#/$defs/principal" },
+        "technical_contact": { "$ref": "#/$defs/principal" },
+        "approver_of_record": { "$ref": "#/$defs/principal" },
+        "change_authority": { "$ref": "#/$defs/principal" },
+        "business_owner": { "$ref": "#/$defs/principal" }
+      }
+    },
+
+    "runtime": {
+      "type": "object",
+      "required": ["framework"],
+      "properties": {
+        "framework": {
+          "type": "string",
+          "examples": ["langgraph", "crewai", "openai-agents", "claude-sdk", "copilot-studio", "bedrock-agentcore", "custom"]
+        },
+        "framework_version": { "type": "string" },
+        "language": { "type": "string" },
+        "language_version": { "type": "string" },
+        "deployment": {
+          "enum": ["kubernetes", "serverless", "vm", "container", "saas", "embedded"]
+        },
+        "cluster_ref": { "type": "string" },
+        "autonomy": {
+          "enum": ["supervised", "semi_autonomous", "autonomous"],
+          "description": "Raising this removes points at which a person could intervene, so it is always a material change."
+        }
+      }
+    },
+
+    "inference": {
+      "type": "object",
+      "description": "Sampling configuration. Usually invisible in a source diff because it lives in a config file or an environment variable, yet it changes behaviour materially. Tracked so a release can report it.",
+      "properties": {
+        "temperature": { "type": "number", "minimum": 0, "maximum": 2 },
+        "top_p": { "type": "number", "minimum": 0, "maximum": 1 },
+        "top_k": { "type": "integer", "minimum": 0 },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "seed": { "type": ["integer", "null"] },
+        "stop_sequences": { "type": "array", "items": { "type": "string" } },
+        "reasoning_effort": { "enum": ["none", "low", "medium", "high", "max"] }
+      }
+    },
+
+    "resilience": {
+      "type": "object",
+      "description": "How failure behaves. Tracked for the same reason as inference settings: these values decide production behaviour and never appear in a meaningful code diff.",
+      "properties": {
+        "request_timeout_ms": { "type": "integer", "minimum": 1 },
+        "total_timeout_ms": { "type": "integer", "minimum": 1 },
+        "max_retries": { "type": "integer", "minimum": 0 },
+        "backoff": { "enum": ["none", "fixed", "linear", "exponential", "exponential_jitter"] },
+        "max_iterations": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Agent loop ceiling. Raising it raises worst-case cost and latency."
+        },
+        "circuit_breaker": {
+          "type": "object",
+          "properties": {
+            "failure_threshold": { "type": "integer", "minimum": 1 },
+            "reset_timeout_ms": { "type": "integer", "minimum": 1 },
+            "half_open_requests": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "rate_limit": {
+          "type": "object",
+          "properties": {
+            "requests_per_minute": { "type": "integer", "minimum": 1 },
+            "tokens_per_minute": { "type": "integer", "minimum": 1 },
+            "concurrency": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "fallback_model": {
+          "type": "string",
+          "description": "Runs under the same approval as the primary, so it must satisfy the same residency and retention constraints."
+        },
+        "degraded_mode": { "enum": ["fail", "queue", "human_handoff", "cached_response"] }
+      }
+    },
+
+    "models": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["provider", "role"],
+        "properties": {
+          "provider": { "type": "string", "examples": ["anthropic", "openai", "azure-openai", "bedrock", "vertex", "self-hosted"] },
+          "family": { "type": "string" },
+          "id": { "type": "string" },
+          "hosting": {
+            "enum": ["vendor_api", "cloud_managed", "self_hosted"],
+            "description": "Determines the residency and retention posture."
+          },
+          "endpoint_region": { "type": "string" },
+          "data_retention": {
+            "enum": ["zero_retention", "30_day", "90_day", "provider_default", "unknown"],
+            "description": "Provider terms differ, so this cannot be a single global setting."
+          },
+          "role": {
+            "enum": ["primary", "fallback", "judge", "embedding", "guardrail", "summariser"],
+            "description": "Identity within the model list. Diffing keys on this, never on array position — position-based identity would report a reorder as a replacement."
+          }
+        }
+      }
+    },
+
+    "prompts": {
+      "type": "array",
+      "description": "Instruction content is referenced by digest only. The descriptor never carries prompt text.",
+      "items": {
+        "type": "object",
+        "required": ["name", "digest"],
+        "properties": {
+          "name": { "type": "string" },
+          "digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+          "role": { "enum": ["system", "developer", "tool_instruction", "guardrail"] },
+          "token_estimate": { "type": "integer" }
+        }
+      }
+    },
+
+    "data": {
+      "type": "object",
+      "description": "PRIMITIVE 2. Declared here so it can be reconciled against observed routing.",
+      "properties": {
+        "classes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "examples": [["customer_pii", "financial", "claims_history"]]
+        },
+        "special_categories": {
+          "type": "array",
+          "items": { "enum": ["health", "biometric", "genetic", "racial_ethnic", "political", "religious", "union", "sexual_orientation", "criminal"] },
+          "description": "Carries an elevated regulatory duty under GDPR and the EU AI Act."
+        },
+        "residency": {
+          "type": "object",
+          "properties": {
+            "permitted_regions": { "type": "array", "items": { "type": "string" } },
+            "cross_border": { "enum": ["prohibited", "permitted_with_safeguards", "permitted_with_consent", "permitted"], "description": "Ordered least to most permissive. Article 46 safeguards and Article 49 consent are different bases and are not interchangeable." },
+            "basis": { "type": "string", "description": "Legal basis, e.g. gdpr_art_44 or an adequacy decision." }
+          }
+        },
+        "retention_days": { "type": "integer", "minimum": 0 },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "type": "string", "examples": ["postgres", "mongodb", "vector_store", "sap", "salesforce", "sharepoint", "s3"] },
+              "region": { "type": "string" },
+              "classes": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        }
+      }
+    },
+
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "effect"],
+        "properties": {
+          "name": { "type": "string" },
+          "effect": { "enum": ["read", "write", "none"] },
+          "reversible": {
+            "type": "boolean",
+            "description": "Whether the action can be compensated. Adding an irreversible capability is the single most consequential change an agent can undergo."
+          },
+          "compensation": { "type": "string", "description": "The operation that undoes this one, when reversible." },
+          "human_approval": { "enum": ["none", "required", "conditional"] },
+          "value_limit": {
+            "type": "object",
+            "properties": {
+              "currency": { "type": "string" },
+              "max": { "type": "number" }
+            },
+            "description": "Ceiling on unattended exposure."
+          }
+        }
+      }
+    },
+
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string" },
+          "kind": { "enum": ["mcp", "http", "grpc", "sql", "function", "a2a"] },
+          "server": { "type": "string" },
+          "endpoint": { "type": "string" },
+          "effect": { "enum": ["read", "write", "none"] },
+          "reversible": { "type": "boolean" },
+          "declared_annotations": {
+            "type": "object",
+            "description": "MCP tool annotations as declared by the server. The MCP specification requires clients to treat these as untrusted, so the platform reconciles them against observed behaviour and records disagreement as a finding.",
+            "properties": {
+              "readOnlyHint": { "type": "boolean" },
+              "destructiveHint": { "type": "boolean" },
+              "idempotentHint": { "type": "boolean" },
+              "openWorldHint": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+
+    "delegates_to": {
+      "type": "array",
+      "description": "Agent-to-agent delegation. Each entry expands the trust boundary, because anything the delegate can reach becomes transitively reachable.",
+      "items": {
+        "type": "object",
+        "required": ["urn"],
+        "properties": {
+          "urn": { "type": "string" },
+          "protocol": { "enum": ["a2a", "http", "mcp", "internal"] },
+          "trust": { "enum": ["internal_accredited", "internal", "partner", "external"] }
+        }
+      }
+    },
+
+    "security": {
+      "type": "object",
+      "properties": {
+        "authentication": { "type": "string", "examples": ["oauth2_client_credentials", "mtls", "api_key", "workload_identity"] },
+        "secrets_source": { "type": "string", "examples": ["vault", "aws_sm", "az_kv", "gcp_sm", "env"] },
+        "network_egress": { "type": "array", "items": { "type": "string" } },
+        "prompt_injection_defences": {
+          "type": "array",
+          "items": { "enum": ["input_classifier", "output_classifier", "tool_allowlist", "output_schema_validation", "sandboxed_execution", "content_provenance", "spotlighting"] }
+        }
+      }
+    },
+
+    "service_levels": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "target"],
+        "properties": {
+          "kind": { "enum": ["availability", "latency_p50", "latency_p95", "latency_p99", "success_rate", "resolution_p1", "resolution_p2"] },
+          "target": { "type": "number" },
+          "unit": { "type": "string" },
+          "window": { "enum": ["hourly", "daily", "weekly", "monthly", "quarterly"] }
+        }
+      }
+    },
+
+    "composition": {
+      "type": "object",
+      "description": "Reviewable makeup of the agent: policies, rules as digests and bounded obligations, skills, sub-agents, configs, memory sources and guardrails. Tool and MCP declarations remain in tools[] and references.mcp_servers[].",
+      "properties": {
+        "model_policy": {
+          "type": "object",
+          "properties": {
+            "selection_mode": { "enum": ["pinned", "allowlist", "auto"] },
+            "pin": {
+              "type": "object",
+              "properties": {
+                "provider": { "type": "string" },
+                "id": { "type": "string" }
+              }
+            },
+            "allowlist": { "type": "array", "items": { "type": "string" } },
+            "denylist": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "rule_sources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "kind", "path", "digest"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": {
+                "enum": [
+                  "agents_md",
+                  "cursor_rule",
+                  "skill",
+                  "system_prompt",
+                  "guardrail_prompt",
+                  "other"
+                ]
+              },
+              "path": { "type": "string" },
+              "digest": { "type": "string" },
+              "language": { "type": "string" }
+            }
+          }
+        },
+        "rule_obligations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "source_ref", "category", "polarity", "statement", "strength", "digest"],
+            "properties": {
+              "id": { "type": "string" },
+              "source_ref": { "type": "string" },
+              "category": { "type": "string" },
+              "polarity": { "enum": ["require", "forbid", "limit"] },
+              "statement": { "type": "string", "maxLength": 512 },
+              "strength": { "enum": ["binding", "advisory"] },
+              "digest": { "type": "string" }
+            }
+          }
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "path", "digest"],
+            "properties": {
+              "name": { "type": "string" },
+              "path": { "type": "string" },
+              "digest": { "type": "string" },
+              "invoked_by": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "sub_agents": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "kind", "ref", "digest"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": {
+                "enum": ["langgraph_subgraph", "cursor_subagent", "a2a_delegate", "other"]
+              },
+              "ref": { "type": "string" },
+              "digest": { "type": "string" },
+              "trust": {
+                "enum": ["internal_accredited", "internal", "partner", "external"]
+              }
+            }
+          }
+        },
+        "configs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "kind", "path", "digest"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "enum": ["env", "yaml", "toml", "json", "other"] },
+              "path": { "type": "string" },
+              "digest": { "type": "string" },
+              "keys": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "memory_retrieval": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "kind", "ref"],
+            "properties": {
+              "name": { "type": "string" },
+              "kind": { "enum": ["vector_store", "bm25", "hybrid", "other"] },
+              "ref": { "type": "string" },
+              "classes": { "type": "array", "items": { "type": "string" } },
+              "region": { "type": "string" }
+            }
+          }
+        },
+        "guardrails": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+              "name": { "type": "string" },
+              "ref": { "type": "string" },
+              "digest": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+
+    "assurance": {
+      "type": "object",
+      "description": "PRIMITIVE 3. Written by the platform, not by the agent. Present in a published descriptor so a consumer can read approval state without a second call.",
+      "properties": {
+        "accreditation_ref": { "type": "string" },
+        "state": { "enum": ["draft", "submitted", "approved", "suspended", "expired", "withdrawn"] },
+        "frameworks": { "type": "array", "items": { "type": "string" } },
+        "baseline_version": {
+          "type": "string",
+          "description": "PRIMITIVE 5. The version that was actually signed off. Materiality is computed against this, and holding it is what no other product does."
+        },
+        "last_attestation": { "type": "string", "format": "date-time" },
+        "next_attestation_due": { "type": "string", "format": "date-time" },
+        "open_findings": {
+          "type": "object",
+          "properties": {
+            "critical": { "type": "integer" },
+            "high": { "type": "integer" },
+            "medium": { "type": "integer" },
+            "low": { "type": "integer" }
+          }
+        },
+        "risk_score": { "type": "integer", "minimum": 0, "maximum": 100 }
+      }
+    },
+
+    "attestation": {
+      "type": "object",
+      "description": "PRIMITIVE 4. Signature over the canonical descriptor, using the same algorithm as A2A signed AgentCards.",
+      "properties": {
+        "alg": { "const": "ES256" },
+        "signed_by": { "type": "string" },
+        "signed_at": { "type": "string", "format": "date-time" },
+        "descriptor_digest": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
+        "signature": { "type": "string" }
+      }
+    }
+  },
+
+  "$defs": {
+    "principal": {
+      "type": "string",
+      "pattern": "^(person|role|team|service):.+$",
+      "examples": ["person:j.doe@acme.com", "role:platform-architecture", "team:insurance-automation"]
+    }
+  }
+}

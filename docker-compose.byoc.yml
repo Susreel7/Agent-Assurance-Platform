@@ -1,0 +1,124 @@
+# BYOC overlay — exercise a customer-hosted deployment locally.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.byoc.yml up
+#
+# Why this file exists: BYOC differs from our cloud in ways that are easy to get wrong
+# and impossible to discover from a SaaS-only development loop. Single tenancy, an
+# offline license, no egress, and provider-backed secrets and object storage all behave
+# differently. Running this overlay weekly catches the drift.
+#
+# MinIO stands in for S3 so the S3 code path is genuinely exercised rather than assumed.
+
+x-byoc-env: &byoc-env
+  DATABASE_URL: postgresql+psycopg://aap:${POSTGRES_PASSWORD:-devonly}@postgres:5432/aap
+  AAP_DEPLOYMENT_MODE: byoc
+  AAP_TENANCY: single
+  AAP_ENVIRONMENT: development
+  AAP_INSTANCE_NAME: byoc-local
+  AAP_DEFAULT_ORG_SLUG: default
+  AAP_DEV_AUTH_BYPASS: "true"
+
+  # Offline, signed entitlement. No network validation, ever.
+  AAP_LICENSE_FILE: /etc/aap/license.aap
+  AAP_LICENSE_PUBLIC_KEY_PATH: /etc/aap/license-pub.pem
+
+  # Object storage through the S3 code path, against a local MinIO.
+  AAP_OBJECT_STORE: s3
+  AAP_OBJECT_STORE_BUCKET: aap-artifacts
+  AAP_OBJECT_STORE_ENDPOINT: http://minio:9000
+  AWS_ACCESS_KEY_ID: ${MINIO_USER:-aapadmin}
+  AWS_SECRET_ACCESS_KEY: ${MINIO_PASSWORD:-aapadminpw}
+  AWS_DEFAULT_REGION: us-east-1
+
+  # A real BYOC install points this at the customer's KMS. Locally we stay on a PEM,
+  # since there is no KMS to talk to.
+  AAP_SIGNING_PROVIDER: local
+  AAP_SIGNING_KEY_PATH: /run/secrets/signing.pem
+
+  AAP_SECRETS_PROVIDER: env
+  AAP_TELEMETRY_ENABLED: "false"
+  AAP_UPDATE_CHECK_ENABLED: "false"
+
+services:
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER:-aapadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-aapadminpw}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      retries: 12
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${MINIO_USER:-aapadmin} ${MINIO_PASSWORD:-aapadminpw} &&
+      mc mb --ignore-existing local/aap-artifacts &&
+      echo 'bucket ready'
+      "
+    restart: "no"
+
+  migrate:
+    environment: *byoc-env
+    volumes:
+      - ./secrets:/run/secrets:ro
+      - ./secrets/byoc:/etc/aap:ro
+
+  seed:
+    environment: *byoc-env
+    volumes:
+      - ./secrets:/run/secrets:ro
+      - ./secrets/byoc:/etc/aap:ro
+
+  api:
+    environment: *byoc-env
+    volumes:
+      - ./services/api:/app
+      - ./secrets:/run/secrets:ro
+      - ./secrets/byoc:/etc/aap:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+
+  worker:
+    environment: *byoc-env
+    volumes:
+      - ./services/api:/app
+      - ./secrets:/run/secrets:ro
+      - ./secrets/byoc:/etc/aap:ro
+
+  observe-ingest:
+    environment:
+      OBSERVE_AIR_GAP_MODE: "true"
+
+  observe-query:
+    environment:
+      OBSERVE_AIR_GAP_MODE: "true"
+
+  observe-worker:
+    environment:
+      OBSERVE_AIR_GAP_MODE: "true"
+
+  collector:
+    environment:
+      COLLECTOR_SAMPLING_POLICY_URL: http://observe-query:8082/v1/sampling-policy
+
+volumes:
+  miniodata:
+
+networks:
+  default:
+    internal: true

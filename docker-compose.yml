@@ -1,0 +1,445 @@
+# Development and demo stack.
+#
+# Runs in `saas` mode with multi-tenancy, because that is the mode with the fewest
+# preconditions. To exercise a customer-hosted deployment locally use:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.byoc.yml up
+#
+# `make up` must complete in under two minutes on a clean machine. That is a hard
+# requirement, not an aspiration — this is also the investor demo environment.
+#
+# Runtime-suite bootstrap gaps (not invented here — see Makefile bootstrap + seed):
+#   - Gateway needs `secrets/router-config-pub.pem` (derived from signing.pem) and a
+#     signed router snapshot (file under deploy/gateway/dev-config/ or remote
+#     GATEWAY_CONFIG_URL after compiling a snapshot in the control plane).
+#   - Collector forward path needs COLLECTOR_WORKLOAD_BEARER_TOKEN from a DB workload
+#     credential with observe:ingest (create via API after seed).
+
+x-api-env: &api-env
+  DATABASE_URL: postgresql+psycopg://aap:${POSTGRES_PASSWORD:-devonly}@postgres:5432/aap
+  AAP_DEPLOYMENT_MODE: saas
+  AAP_TENANCY: multi
+  AAP_ENVIRONMENT: development
+  AAP_INSTANCE_NAME: local
+  AAP_DEV_AUTH_BYPASS: "true"
+  AAP_SIGNING_PROVIDER: local
+  AAP_SIGNING_KEY_PATH: /run/secrets/signing.pem
+  AAP_OBJECT_STORE: local
+  AAP_OBJECT_STORE_LOCAL_PATH: /var/lib/aap/artifacts
+  AAP_SECRETS_PROVIDER: env
+  AAP_TELEMETRY_ENABLED: "false"
+  AAP_LOG_LEVEL: INFO
+  AAP_LLM_GATEWAY_ENABLED: "true"
+  AAP_OBSERVE_QUERY_URL: http://observe-query:8082
+  AAP_OBSERVE_INTERNAL_SERVICE_TOKEN: dev-internal-observe
+  AAP_PROMPT_SERVICE_URL: http://prompt-api:8095
+  AAP_PROMPT_INTERNAL_SERVICE_TOKEN: dev-internal-prompt
+  AAP_RUNTIME_WORKLOAD_BEARER: ${RUNTIME_WORKLOAD_BEARER:-}
+  AAP_EVALUATE_SERVICE_URL: http://evaluate-api:8096
+  AAP_EVALUATE_INTERNAL_SERVICE_TOKEN: dev-internal-evaluate
+
+x-observe-env: &observe-env
+  OBSERVE_DATABASE_URL: postgresql://observe:${POSTGRES_PASSWORD:-devonly}@postgres:5432/observe
+  OBSERVE_CLICKHOUSE_URL: http://clickhouse:8123
+  OBSERVE_CLICKHOUSE_DATABASE: observe
+  OBSERVE_REDIS_URL: redis://redis:6379/0
+  OBSERVE_OBJECT_STORE: local
+  OBSERVE_OBJECT_STORE_ROOT: /var/lib/aap/observe/objects
+  # Dev-only Fernet material. Production must use a secret manager/customer KMS.
+  OBSERVE_PAYLOAD_ENCRYPTION_KEY: ${OBSERVE_PAYLOAD_ENCRYPTION_KEY:-7dBIPYGHnfUUUwvViWNzwhWBSjbsR7jwIlV_qFXr-KQ=}
+  OBSERVE_INTROSPECTION_URL: http://api:8000/v1/workload-credentials/-/introspect
+  OBSERVE_INTERNAL_SERVICE_TOKEN: dev-internal-observe
+  OBSERVE_OPERATIONS_PROJECTION_URL: http://api:8000/v1/operations/runs
+  OBSERVE_OPERATIONS_PROJECTION_BEARER: ${RUNTIME_WORKLOAD_BEARER:-}
+  OBSERVE_RUN_MIGRATIONS_ON_STARTUP: "true"
+  OBSERVE_RUN_CLICKHOUSE_INIT_ON_STARTUP: "true"
+
+x-prompt-env: &prompt-env
+  PROMPT_DATABASE_URL: postgresql://prompt:${POSTGRES_PASSWORD:-devonly}@postgres:5432/prompt
+  PROMPT_INTERNAL_SERVICE_TOKEN: dev-internal-prompt
+  PROMPT_INTROSPECTION_URL: http://api:8000/v1/workload-credentials/-/introspect
+  PROMPT_ROUTER_BASE_URL: http://gateway:8080
+  PROMPT_DEFAULT_ENCRYPTION_KEY_REF: local:default
+  # Dev-only Fernet material for encrypted artifact bodies (not a workload credential).
+  PROMPT_ENCRYPTION_KEYS_JSON: '{"local:default":"7dBIPYGHnfUUUwvViWNzwhWBSjbsR7jwIlV_qFXr-KQ="}'
+  PROMPT_REDIS_URL: redis://redis:6379/2
+
+x-evaluate-env: &evaluate-env
+  EVALUATE_DATABASE_URL: postgresql://evaluate:${POSTGRES_PASSWORD:-devonly}@postgres:5432/evaluate
+  EVALUATE_INTERNAL_SERVICE_TOKEN: dev-internal-evaluate
+  EVALUATE_INTROSPECTION_URL: http://api:8000/v1/workload-credentials/-/introspect
+  EVALUATE_PROMPT_BASE_URL: http://prompt-api:8095
+  EVALUATE_PROMPT_WORKLOAD_BEARER: ${RUNTIME_WORKLOAD_BEARER:-}
+  EVALUATE_OBSERVE_BASE_URL: http://observe-query:8082
+  EVALUATE_OBSERVE_WORKER_BEARER: dev-internal-observe
+  EVALUATE_ROUTER_BASE_URL: http://gateway:8080
+  EVALUATE_ROUTER_WORKER_BEARER: ${RUNTIME_WORKLOAD_BEARER:-}
+  EVALUATE_REDIS_URL: redis://redis:6379/1
+  EVALUATE_REDIS_ENABLED: "true"
+  EVALUATE_RUN_MIGRATIONS_ON_STARTUP: "true"
+  EVALUATE_OBJECT_STORE_BACKEND: local
+  EVALUATE_OBJECT_STORE_LOCAL_ROOT: /var/lib/aap/evaluate/objects
+  EVALUATE_DEFAULT_ENCRYPTION_KEY_REF: local:default
+  EVALUATE_ENCRYPTION_KEYS_JSON: '{"local:default":"7dBIPYGHnfUUUwvViWNzwhWBSjbsR7jwIlV_qFXr-KQ="}'
+  EVALUATE_DOWNLOAD_SIGNING_SECRET: dev-download-signing-secret
+
+x-http-health-ingest: &http-health-ingest
+  interval: 10s
+  timeout: 3s
+  retries: 6
+  start_period: 20s
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: aap
+      POSTGRES_USER: aap
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-devonly}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./deploy/postgres/init-runtime-databases.sh:/docker-entrypoint-initdb.d/01-runtime-databases.sh:ro
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aap -d aap"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    command:
+      - postgres
+      - -c
+      - work_mem=32MB
+      - -c
+      - max_connections=200
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.8-alpine
+    environment:
+      CLICKHOUSE_DB: observe
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    volumes:
+      - clickhousedata:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8123/ping | grep -q Ok."]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+      start_period: 15s
+
+  migrate:
+    build:
+      context: ./services/api
+    command: alembic upgrade head
+    environment: *api-env
+    volumes:
+      - ./services/api:/app
+      - ./AGENTS.md:/app/AGENTS.md:ro
+      - ./docs/contracts:/contracts:ro
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  seed:
+    profiles: ["demo"]
+    build:
+      context: ./services/api
+    command: python -m seed.generate --agents 40 --teams 5 --days 30
+    environment: *api-env
+    volumes:
+      - ./services/api:/app
+      - ./AGENTS.md:/app/AGENTS.md:ro
+      - ./docs/contracts:/contracts:ro
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    restart: "no"
+
+  api:
+    build:
+      context: ./services/api
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+    environment:
+      <<: *api-env
+      AAP_CORS_ORIGINS: http://localhost:5173,http://localhost:3000
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/api:/app
+      - ./AGENTS.md:/app/AGENTS.md:ro
+      - ./docs/contracts:/contracts:ro
+      - ./secrets:/run/secrets:ro
+      - artifacts:/var/lib/aap/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      observe-query:
+        condition: service_healthy
+      prompt-api:
+        condition: service_started
+      evaluate-api:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8000/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+
+  worker:
+    build:
+      context: ./services/api
+    command: python -m app.workers.runner
+    environment: *api-env
+    volumes:
+      - ./services/api:/app
+      - ./AGENTS.md:/app/AGENTS.md:ro
+      - ./docs/contracts:/contracts:ro
+      - ./secrets:/run/secrets:ro
+      - artifacts:/var/lib/aap/artifacts
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import os,sys,time;
+          p='/tmp/aap-worker.heartbeat';
+          sys.exit(0 if os.path.exists(p) and time.time()-os.path.getmtime(p) < 30 else 1)"
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 15s
+
+  observe-ingest:
+    build:
+      context: ./services/observe
+    command: observe-ingest
+    environment:
+      <<: *observe-env
+      OBSERVE_RUN_MIGRATIONS_ON_STARTUP: "false"
+      OBSERVE_RUN_CLICKHOUSE_INIT_ON_STARTUP: "false"
+    volumes:
+      - ./services/observe:/app
+      - observe-objects:/var/lib/aap/observe/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+      observe-query:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-health-ingest
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8080/healthz')"]
+
+  observe-worker:
+    build:
+      context: ./services/observe
+    command: observe-worker
+    environment:
+      <<: *observe-env
+      OBSERVE_RUN_MIGRATIONS_ON_STARTUP: "false"
+      OBSERVE_RUN_CLICKHOUSE_INIT_ON_STARTUP: "false"
+    volumes:
+      - ./services/observe:/app
+      - observe-objects:/var/lib/aap/observe/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      observe-ingest:
+        condition: service_healthy
+      observe-query:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-health-ingest
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8081/healthz')"]
+
+  observe-query:
+    build:
+      context: ./services/observe
+    command: observe-query
+    environment: *observe-env
+    volumes:
+      - ./services/observe:/app
+      - observe-objects:/var/lib/aap/observe/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-health-ingest
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8082/healthz')"]
+
+  prompt-api:
+    build:
+      context: ./services/prompt
+    command: uvicorn prompt.app:create_app --factory --host 0.0.0.0 --port 8095
+    environment: *prompt-env
+    volumes:
+      - ./services/prompt:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-health-ingest
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8095/healthz')"]
+
+  evaluate-api:
+    build:
+      context: ./services/evaluate
+    command: uvicorn evaluate.app:create_app --factory --host 0.0.0.0 --port 8096
+    environment: *evaluate-env
+    volumes:
+      - ./services/evaluate:/app
+      - evaluate-objects:/var/lib/aap/evaluate/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *http-health-ingest
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8096/healthz')"]
+
+  evaluate-worker:
+    build:
+      context: ./services/evaluate
+    command: evaluate-worker
+    environment: *evaluate-env
+    volumes:
+      - ./services/evaluate:/app
+      - evaluate-objects:/var/lib/aap/evaluate/objects
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      evaluate-api:
+        condition: service_started
+      prompt-api:
+        condition: service_started
+      observe-query:
+        condition: service_started
+      gateway:
+        condition: service_started
+
+  gateway:
+    build:
+      context: ./services/gateway
+    environment:
+      GATEWAY_LISTEN: ":8080"
+      GATEWAY_CONFIG_DIR: /etc/gateway
+      GATEWAY_CONFIG_URL: http://api:8000/v1/model-routing/projects/${RUNTIME_PROJECT_ID:-00000000-0000-0000-0000-000000000000}/gateway-config
+      GATEWAY_CONFIG_ORG_ID: ${RUNTIME_ORG_ID:-}
+      GATEWAY_CONFIG_PUBLIC_KEY_FILE: /run/secrets/router-config-pub.pem
+      GATEWAY_CONFIG_REQUIRED: "false"
+      GATEWAY_DEV_INSECURE_LIMITER: "true"
+      GATEWAY_SECRET_POLICY: "block"
+      GATEWAY_AUDIT_URL: http://api:8000/v1/audit/events
+      GATEWAY_AUDIT_AUTHORIZATION: ${RUNTIME_WORKLOAD_BEARER:-}
+      GATEWAY_AUDIT_FLUSH_INTERVAL: ${GATEWAY_AUDIT_FLUSH_INTERVAL:-1s}
+      GATEWAY_REDIS_ADDR: redis:6379
+      GATEWAY_BUILD_REVISION: dev
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./deploy/gateway/dev-config:/etc/gateway:ro
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  mcp-adapter:
+    build:
+      context: ./services/mcp-adapter
+    environment:
+      MCP_CONTROL_PLANE_URL: http://api:8000
+      MCP_USAGE_BEARER: ${RUNTIME_WORKLOAD_BEARER:-}
+      MCP_OTLP_TRACES_ENDPOINT: http://collector:4318/v1/traces
+      MCP_MAX_REQUEST_BYTES: "2097152"
+      MCP_UPSTREAM_TIMEOUT_SECONDS: "120"
+    ports:
+      - "${MCP_ADAPTER_PORT:-8097}:8097"
+    volumes:
+      - ./examples/mcp:/servers:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      collector:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://localhost:8097/healthz')"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+
+  collector:
+    build:
+      context: ./services/collector
+    environment:
+      COLLECTOR_OBSERVE_INGEST_URL: http://observe-ingest:8080/v1/traces
+      COLLECTOR_SPOOL_DIR: /var/lib/aap/collector/spool
+      COLLECTOR_WORKLOAD_BEARER_TOKEN: ${RUNTIME_WORKLOAD_BEARER:-}
+      COLLECTOR_SAMPLING_POLICY_URL: http://observe-query:8082/v1/sampling-policy
+      COLLECTOR_SAMPLING_POLICY_BEARER_TOKEN: dev-internal-observe
+      COLLECTOR_LOG_LEVEL: INFO
+    ports:
+      - "${OTLP_PORT:-4318}:4318"
+    volumes:
+      - collector-spool:/var/lib/aap/collector/spool
+    depends_on:
+      observe-ingest:
+        condition: service_started
+      observe-query:
+        condition: service_healthy
+      api:
+        condition: service_started
+
+  web:
+    build:
+      context: ./services/web
+      target: runtime
+      args:
+        VITE_API_BASE: /
+        VITE_API_MODE: live
+        VITE_MCP_ADAPTER_BASE: http://localhost:${MCP_ADAPTER_PORT:-8097}
+    ports:
+      - "5173:80"
+    depends_on:
+      api:
+        condition: service_started
+
+volumes:
+  pgdata:
+  artifacts:
+  collector-spool:
+  observe-objects:
+  evaluate-objects:
+  clickhousedata:

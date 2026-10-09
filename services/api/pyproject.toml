@@ -1,0 +1,133 @@
+[project]
+name = "aap-api"
+version = "0.1.0"
+description = "Agent Assurance Platform — control plane"
+requires-python = ">=3.12"
+
+# Deliberately small. Per AGENTS.md, adding a dependency is a decision, not a reflex.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy[asyncio]>=2.0.36",
+    "psycopg[binary,pool]>=3.2",
+    "alembic>=1.14",
+    "cryptography>=43.0",
+    "httpx>=0.27",
+    "jsonschema>=4.23",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    # Token verification. `pyjwt` over `python-jose` and `authlib`, both of which were
+    # listed here unused: one library on the security boundary is easier to audit than
+    # three, and pyjwt is the one with the algorithm allowlist as a required argument
+    # rather than an option, which is the mistake that matters. See D-033.
+    "pyjwt[crypto]>=2.9",
+]
+
+[project.optional-dependencies]
+# Cloud SDKs are per-target extras so a BYOC image for one cloud does not carry
+# the libraries for the other two. Air-gapped builds use none of them.
+aws = ["boto3>=1.35"]
+azure = [
+    "azure-identity>=1.19",
+    "azure-storage-blob>=12.23",
+    "azure-keyvault-keys>=4.9",
+    "azure-keyvault-secrets>=4.8",
+]
+gcp = [
+    "google-cloud-storage>=2.18",
+    "google-cloud-secret-manager>=2.20",
+    "google-cloud-kms>=3.1",
+]
+vault = ["hvac>=2.3"]
+
+# Heavier capabilities, pulled in only where they are used.
+packs = ["weasyprint>=62.0"]
+drift = ["sentence-transformers>=3.2"]
+
+dev = [
+    "aap-api[aws,packs]",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "testcontainers[postgres]>=4.8",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-pyyaml",
+    "types-jsonschema",
+]
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app", "seed"]
+
+# ----------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",    # pycodestyle, pyflakes
+    "I",              # import sorting
+    "N",              # naming
+    "UP",             # pyupgrade
+    "B",              # bugbear
+    "A",              # builtin shadowing
+    "C4",             # comprehensions
+    "SIM",            # simplify
+    "RUF",
+]
+# TCH (type-checking imports) is deliberately absent. It optimises import time, which
+# is irrelevant in a long-lived API process, and it fights three of the four libraries
+# here: Pydantic, FastAPI and SQLAlchemy all resolve annotations at runtime. Its
+# failure mode is a NameError reached only on the path that evaluates the annotation,
+# which is precisely the kind of subtle breakage this codebase trades away. See D-010.
+ignore = [
+    "B008",  # FastAPI Depends() in defaults is the documented idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*" = ["E501"]   # SQL blocks read better unwrapped
+"tests/*" = ["S101"]
+# Two false positives on documented SQLAlchemy idioms: `UUID as PgUUID` is the standard
+# way to disambiguate the dialect type from uuid.UUID, and `type_annotation_map` must be
+# a dict class attribute because that is the API.
+"app/db/base.py" = ["N811", "RUF012"]
+"app/db/models/*" = ["N811"]
+
+# ----------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Cloud SDKs and optional extras ship incomplete or absent stubs.
+module = [
+    "boto3.*", "botocore.*",
+    "azure.*", "google.*", "hvac.*",
+    "weasyprint.*", "sentence_transformers.*",
+    "testcontainers.*",
+]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning"]
+markers = [
+    "golden: contract tests that pin output byte-for-byte",
+    "invariant: tests of load-bearing system properties",
+    "integration: needs a real Postgres; skipped when none is reachable",
+]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/main.py", "*/migrations/*"]

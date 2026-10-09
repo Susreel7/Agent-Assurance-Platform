@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>Agent Assurance</title>
+    <!--
+      Runs before the first paint, so the stored theme is on the element by the time any
+      pixel is drawn. Doing this in React instead means painting the default theme and
+      correcting it a frame later, which on a dark-by-default console is a white flash on
+      every cold load. The key is shared with src/lib/theme.tsx.
+    -->
+    <script>
+      (function () {
+        try {
+          var choice = localStorage.getItem("aap.theme.v1") || "dark";
+          var dark =
+            choice === "dark" ||
+            (choice === "system" &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          var root = document.documentElement;
+          root.classList.toggle("dark", dark);
+          root.classList.toggle("light", !dark);
+        } catch (error) {
+          // Storage is unavailable in private browsing. The `class="dark"` above stands.
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

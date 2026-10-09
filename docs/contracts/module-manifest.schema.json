@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-assurance.invalid/contracts/module-manifest.schema.json",
+  "title": "AAP Effective Module Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revision", "modules"],
+  "properties": {
+    "revision": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "modules": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["router", "observe", "prompt", "evaluate"],
+      "properties": {
+        "router": {"$ref": "#/$defs/module"},
+        "observe": {"$ref": "#/$defs/module"},
+        "prompt": {"$ref": "#/$defs/module"},
+        "evaluate": {"$ref": "#/$defs/module"}
+      }
+    }
+  },
+  "$defs": {
+    "module": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "base_path", "limits", "access"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "base_path": {
+          "type": "string",
+          "pattern": "^/[a-z][a-z0-9-]*$"
+        },
+        "reason": {
+          "type": ["string", "null"],
+          "maxLength": 256
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["integer", "number", "string", "boolean", "null"]
+          }
+        },
+        "access": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["read", "configure", "ingest", "infer"],
+          "properties": {
+            "read": {"type": "boolean"},
+            "configure": {"type": "boolean"},
+            "ingest": {"type": "boolean"},
+            "infer": {"type": "boolean"}
+          }
+        }
+      }
+    }
+  }
+}

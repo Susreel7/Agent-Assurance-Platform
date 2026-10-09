@@ -1,0 +1,75 @@
+[project]
+name = "aap-cli"
+version = "0.1.0"
+description = "Agent Assurance Platform — engineering CLI for CI release gates"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "jsonschema>=4.23",
+]
+
+[project.optional-dependencies]
+offline = ["aap-api"]
+dev = [
+    "aap-api @ file:../../services/api",
+    "aap-cli[offline]",
+    "pytest>=8.3",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "types-pyyaml",
+    "types-jsonschema",
+]
+
+[project.scripts]
+aap = "aap_cli.main:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aap_cli*"]
+
+[tool.setuptools.package-data]
+aap_cli = ["schema/*.json"]
+
+# ----------------------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",
+    "I",
+    "N",
+    "UP",
+    "B",
+    "A",
+    "C4",
+    "SIM",
+    "RUF",
+]
+ignore = [
+    "B008",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["S101"]
+
+# ----------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+
+[[tool.mypy.overrides]]
+module = ["app.*"]
+ignore_missing_imports = true
+
+# ----------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::DeprecationWarning"]

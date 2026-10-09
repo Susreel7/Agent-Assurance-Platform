@@ -1,0 +1,49 @@
+.env
+.env.*
+!.env.example
+
+# Local client and IdP files. A copied mcp.json is how an internal host or token
+# leaves a machine. The example server in examples/mcp needs none of these.
+mcp.json
+**/*.mcp.json
+**/mcp.json.example
+
+# Signing keys and licenses. Never commit these — a leaked signing key means every
+# accreditation pack we ever issued becomes forgeable.
+secrets/
+*.pem
+*.key
+*.aap
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+node_modules/
+services/web/dist/
+.edge-*/
+.ui-captures/
+
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local run output. Logs and one-off screenshots are not part of the project.
+*.log
+openapi-err.txt
+phase6-*.png
+services/web/ui-audit-report.json
+
+deploy/airgap/bundle/
+*.tar
+*.tar.gz

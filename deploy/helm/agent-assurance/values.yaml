@@ -1,0 +1,148 @@
+# Default values — our cloud, multi-tenant.
+#
+# BYOC and air-gapped installs override this with values-byoc-<cloud>.yaml. Keep the
+# structure identical across all of them so a customer can diff their file against the
+# default and see exactly what differs about their deployment. That diff is usually the
+# first thing a security reviewer asks for.
+
+deployment:
+  # saas | byoc | airgap
+  mode: saas
+  # multi | single  — byoc and airgap must be single
+  tenancy: multi
+  instanceName: production
+  environment: production
+
+image:
+  registry: ghcr.io/agent-assurance
+  # Cloud-specific variants: -aws, -azure, -gcp, -airgap. The suffix decides which
+  # cloud SDKs are present in the image at all.
+  tag: 0.1.0
+  variant: ""
+  pullPolicy: IfNotPresent
+  pullSecrets: []
+
+api:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 250m, memory: 384Mi }
+    limits:   { cpu: 1000m, memory: 768Mi }
+  podDisruptionBudget:
+    minAvailable: 1
+
+worker:
+  replicaCount: 1
+  concurrency: 4
+  resources:
+    # Pack rendering and probe execution are the memory-hungry paths, which is why
+    # the worker is provisioned well above the API.
+    requests: { cpu: 500m, memory: 768Mi }
+    limits:   { cpu: 2000m, memory: 2Gi }
+
+web:
+  replicaCount: 2
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits:   { cpu: 200m, memory: 192Mi }
+
+database:
+  # In every non-development deployment this points at managed Postgres: RDS, Azure
+  # Database for PostgreSQL, or Cloud SQL. The chart never runs Postgres itself —
+  # operating someone else's stateful database is not a burden worth taking on.
+  external: true
+  host: ""
+  port: 5432
+  name: aap
+  user: aap
+  sslMode: require
+  # Secret holding the password. Never set the password in values.
+  existingSecret: ""
+  existingSecretKey: password
+  poolSize: 10
+
+objectStore:
+  # local | s3 | azblob | gcs
+  provider: s3
+  bucket: ""
+  prefix: ""
+  endpoint: ""
+
+secretsProvider:
+  # env | aws_sm | az_kv | gcp_sm | vault
+  provider: env
+  prefix: "aap/"
+  # Provider-specific location, e.g. a Key Vault URL or a GCP project id.
+  location: ""
+
+signing:
+  # local | aws_kms | az_kv | gcp_kms
+  #
+  # In BYOC the correct answer is the customer's own KMS. That makes us structurally
+  # incapable of signing on their behalf, which is a stronger guarantee than any
+  # contractual commitment. Point this at their key and say so in the security review.
+  provider: local
+  keyRef: ""
+  existingSecret: ""
+  existingSecretKey: signing.pem
+
+licensing:
+  # Required for byoc and airgap. A signed file, validated offline — no entitlement
+  # check may ever require network access.
+  enabled: false
+  existingSecret: ""
+  licenseKey: license.aap
+  publicKeyKey: license-pub.pem
+
+identity:
+  oidc:
+    issuer: ""
+    audience: "agent-assurance"
+
+telemetry:
+  # Opt-in in BYOC, forbidden in airgap. Metadata only: version, agent counts,
+  # error rates. Never evidence, never descriptors.
+  enabled: false
+  endpoint: ""
+
+retention:
+  evidenceDays: 400
+
+serviceAccount:
+  create: true
+  name: ""
+  # Workload identity annotations. This is how the pod reaches the customer's own KMS,
+  # object store and secret manager without any static credentials.
+  annotations: {}
+
+ingress:
+  enabled: true
+  className: nginx
+  host: ""
+  tls:
+    enabled: true
+    secretName: ""
+  annotations: {}
+
+networkPolicy:
+  # Default deny, with explicit egress. Customers running in regulated environments ask
+  # for this, and having it as a default rather than an option is worth real goodwill.
+  enabled: true
+  allowedEgress:
+    - name: postgres
+      port: 5432
+    - name: dns
+      port: 53
+  # Model provider endpoints the assurance probes need to reach. Empty means probes
+  # are disabled, which is the correct default for air-gapped installs.
+  modelProviderEgress: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+  seccompProfile: { type: RuntimeDefault }
+
+containerSecurityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities: { drop: ["ALL"] }

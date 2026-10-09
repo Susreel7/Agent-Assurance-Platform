@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-assurance.invalid/contracts/router-config.schema.json",
+  "title": "AAP Router Configuration Snapshot",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_revision",
+    "snapshot_id",
+    "organization_id",
+    "project_id",
+    "issued_at",
+    "expires_at",
+    "rules_digest",
+    "deployments",
+    "routes",
+    "workload_bindings"
+  ],
+  "properties": {
+    "schema_revision": {"const": 1},
+    "snapshot_id": {"type": "string", "format": "uuid"},
+    "organization_id": {"type": "string", "format": "uuid"},
+    "project_id": {"type": "string", "format": "uuid"},
+    "issued_at": {"type": "string", "format": "date-time"},
+    "expires_at": {"type": "string", "format": "date-time"},
+    "rules_digest": {"$ref": "#/$defs/digest"},
+    "key_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "signature": {"type": "string", "minLength": 16, "maxLength": 1024},
+    "organization_limits": {"$ref": "#/$defs/rate_limits"},
+    "deployments": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/deployment"}
+    },
+    "routes": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10000,
+      "items": {"$ref": "#/$defs/route"}
+    },
+    "workload_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 100000,
+      "items": {"$ref": "#/$defs/workload_binding"}
+    }
+  },
+  "$defs": {
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "provider",
+        "model",
+        "endpoint",
+        "credential_ref",
+        "region",
+        "jurisdiction",
+        "capabilities",
+        "priority",
+        "weight"
+      ],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "provider": {
+          "enum": ["openai", "openai_compatible", "azure_openai", "anthropic", "bedrock", "gemini", "vertex"]
+        },
+        "model": {"type": "string", "minLength": 1, "maxLength": 256},
+        "endpoint": {"type": "string", "format": "uri", "maxLength": 2048},
+        "credential_ref": {"type": "string", "minLength": 1, "maxLength": 512},
+        "region": {"type": "string", "minLength": 1, "maxLength": 64},
+        "jurisdiction": {"type": "string", "minLength": 1, "maxLength": 16},
+        "capabilities": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": ["chat", "responses", "embeddings", "streaming", "responses_stream", "tools", "json_schema", "vision", "reasoning"]
+          }
+        },
+        "priority": {"type": "integer", "minimum": 0, "maximum": 10000},
+        "weight": {"type": "integer", "minimum": 1, "maximum": 10000},
+        "rpm": {"type": ["integer", "null"], "minimum": 1},
+        "tpm": {"type": ["integer", "null"], "minimum": 1},
+        "timeout_ms": {"type": "integer", "minimum": 100, "maximum": 3600000},
+        "max_retries": {"type": "integer", "minimum": 0, "maximum": 10},
+        "input_price_micros_per_m": {"type": "integer", "minimum": 0},
+        "output_price_micros_per_m": {"type": "integer", "minimum": 0},
+        "max_concurrency": {"type": ["integer", "null"], "minimum": 1},
+        "daily_budget_micros": {"type": ["integer", "null"], "minimum": 1},
+        "cooldown": {"$ref": "#/$defs/cooldown"},
+        "data_classes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        }
+      }
+    },
+    "route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "agent_id",
+        "environment",
+        "alias",
+        "strategy",
+        "deployment_ids",
+        "enforcement"
+      ],
+      "properties": {
+        "id": {"type": "string", "format": "uuid"},
+        "agent_id": {"type": "string", "format": "uuid"},
+        "agent_version_id": {"type": ["string", "null"], "format": "uuid"},
+        "environment": {"enum": ["dev", "test", "staging", "production"]},
+        "alias": {"type": "string", "minLength": 1, "maxLength": 256},
+        "strategy": {
+          "enum": ["priority", "weighted", "least_busy", "latency", "lowest_cost"]
+        },
+        "deployment_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "format": "uuid"}
+        },
+        "permitted_regions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        },
+        "data_classes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 64}
+        },
+        "enforcement": {"enum": ["advisory", "overrideable", "blocking"]},
+        "fallback_before_first_byte": {"type": "boolean", "default": true},
+        "max_attempts": {"type": "integer", "minimum": 1, "maximum": 10},
+        "response_cache_enabled": {"type": "boolean", "default": false},
+        "response_cache_ttl_seconds": {"type": "integer", "minimum": 1, "maximum": 86400}
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {"response_cache_enabled": {"const": true}},
+            "required": ["response_cache_enabled"]
+          },
+          "then": {"required": ["response_cache_ttl_seconds"]}
+        }
+      ]
+    },
+    "workload_binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "generation_id",
+        "secret_hash",
+        "organization_id",
+        "project_id",
+        "environment",
+        "modules",
+        "scopes",
+        "allowed_model_patterns"
+      ],
+      "properties": {
+        "generation_id": {"type": "string", "format": "uuid"},
+        "secret_hash": {"$ref": "#/$defs/digest"},
+        "organization_id": {"type": "string", "format": "uuid"},
+        "project_id": {"type": "string", "format": "uuid"},
+        "agent_id": {"type": ["string", "null"], "format": "uuid"},
+        "member_id": {"type": ["string", "null"], "format": "uuid"},
+        "environment": {"enum": ["dev", "test", "staging", "production"]},
+        "modules": {
+          "type": "array",
+          "contains": {"const": "router"},
+          "uniqueItems": true,
+          "items": {"enum": ["router", "observe", "prompt", "evaluate"]}
+        },
+        "scopes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "allowed_model_patterns": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 256}
+        },
+        "expires_at": {"type": ["string", "null"], "format": "date-time"},
+        "revoked_at": {"type": ["string", "null"], "format": "date-time"},
+        "rpm": {"type": ["integer", "null"], "minimum": 1},
+        "tpm": {"type": ["integer", "null"], "minimum": 1},
+        "max_concurrency": {"type": ["integer", "null"], "minimum": 1},
+        "daily_budget_micros": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "rate_limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "rpm": {"type": ["integer", "null"], "minimum": 1},
+        "tpm": {"type": ["integer", "null"], "minimum": 1},
+        "max_concurrency": {"type": ["integer", "null"], "minimum": 1},
+        "daily_budget_micros": {"type": ["integer", "null"], "minimum": 1}
+      }
+    },
+    "cooldown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["failure_threshold", "initial_cooldown_ms", "max_cooldown_ms"],
+      "properties": {
+        "failure_threshold": {"type": "integer", "minimum": 1, "maximum": 100},
+        "initial_cooldown_ms": {"type": "integer", "minimum": 1, "maximum": 3600000},
+        "max_cooldown_ms": {"type": "integer", "minimum": 1, "maximum": 86400000}
+      }
+    }
+  }
+}
